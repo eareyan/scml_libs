@@ -2,8 +2,6 @@ import pulp
 import time
 from negmas import Contract
 from typing import List, Dict
-from pulp import PULP_CBC_CMD
-from prettytable import PrettyTable
 
 
 class SCMLContractsSigner:
@@ -92,7 +90,8 @@ class SCMLContractsSigner:
                     'time_to_generate_ilp': None,
                     'time_to_solve_ilp': None,
                     'agreements': agreements,
-                    'trust_probabilities': trust_probabilities}
+                    'trust_probabilities': trust_probabilities,
+                    'profit': None}
 
         # Partition agreements into buy and sell agreements.
         agreements_to_buy_inputs, agreements_to_sell_outputs = SCMLContractsSigner.partition_agreements(agent_id, agreements, trust_probabilities)
@@ -105,7 +104,8 @@ class SCMLContractsSigner:
                     'time_to_generate_ilp': None,
                     'time_to_solve_ilp': None,
                     'agreements': agreements,
-                    'trust_probabilities': trust_probabilities}
+                    'trust_probabilities': trust_probabilities,
+                    'profit': None}
 
         # For efficiency purposes, we order the agreements by delivery times. But, before we do, we must be able to
         # recover the indices of the agreements as given to the solver, otherwise, we can't map the output to the right agreements.
@@ -168,7 +168,7 @@ class SCMLContractsSigner:
 
         # Solve the integer program and hide the output given by the solver.
         t0_solve = time.time()
-        model.solve(PULP_CBC_CMD(msg=False))
+        model.solve(pulp.PULP_CBC_CMD(msg=False))
         time_to_solve_ilp = time.time() - t0_solve
 
         # Record which contracts should be signed. We start by assuming no contracts will be signed.
@@ -188,7 +188,8 @@ class SCMLContractsSigner:
                 'time_to_generate_ilp': time_to_generate_ilp,
                 'time_to_solve_ilp': time_to_solve_ilp,
                 'agreements': agreements,
-                'trust_probabilities': trust_probabilities}
+                'trust_probabilities': trust_probabilities,
+                'profit': pulp.value(model.objective)}
 
     @staticmethod
     def get_plan_as_lists(signer_output):
@@ -211,7 +212,7 @@ class SCMLContractsSigner:
     @staticmethod
     def is_sign_plan_consistent(signer_output):
         """
-        Given the output of the signer, this function checks if the plan is feasible, i.e.,
+        Given the output of a signer, this function checks if the plan is feasible, i.e.,
         if it never has a negative number of output units assuming all inputs are turned
         into outputs in 1 time step and that all outputs are sold as indicated by the sign plan.
         :param signer_output: the output of SCMLContractsSigner.sign
@@ -231,70 +232,46 @@ class SCMLContractsSigner:
         return True
 
     @staticmethod
-    def signer_inspector(signer_output):
+    def greedy_signer(agent_id: str, agreements: List[Contract], trust_probabilities: Dict[str, float]):
         """
-        This function takes the output of the signer and outputs useful info. Used for debugging purposes.
-        :param signer_output:
+        A simple greedy signer. Signs sell contracts in descending order of revenue, provided the contract can be satisfied.
+        The buy contracts are completely consumed by a sell contract, i.e., if they are used for one sell contract, any possible
+        remaining units are effectively wasted.
+
+        :param agent_id:
+        :param agreements:
+        :param trust_probabilities:
         :return:
         """
-        # Some prints.
-        agreements_table = PrettyTable()
-        agreements_table.field_names = ['t', 'q', 'p', 'is_buy', 'partners', 'trust', 'signed?']
-        for i, a in enumerate(signer_output['agreements']):
-            agreements_table.add_row([a['agreement']['time'],
-                                      a['agreement']['quantity'],
-                                      f"{a['agreement']['unit_price'] : .4f}",
-                                      a['annotation']['is_buy'],
-                                      a['partners'],
-                                      f"{SCMLContractsSigner.find_partner_trust(agent_id=signer_output['agent_id'], agreement=a, trust_probabilities=signer_output['trust_probabilities']) : .4f}",
-                                      'yes' if signer_output['list_of_signatures'][i] is not None else 'No'])
-        print('\n--- Agreements ---')
-        print(agreements_table)
+        buy_agreements, sell_agreements = SCMLContractsSigner.partition_agreements(agent_id, agreements, trust_probabilities)
+        buy_agreements = sorted(buy_agreements, key=lambda x: x[SCMLContractsSigner.QUANTITY] * x[SCMLContractsSigner.PRICE] * x[SCMLContractsSigner.PARTNER_TRUST], reverse=False)
+        sell_agreements = sorted(sell_agreements, key=lambda x: x[SCMLContractsSigner.QUANTITY] * x[SCMLContractsSigner.PRICE] * x[SCMLContractsSigner.PARTNER_TRUST], reverse=True)
 
-        # Pretty table print of the buy and sell plan.
-        horizon, buy_plan, sell_plan = SCMLContractsSigner.get_plan_as_lists(signer_output)
-        signature_plan_table = PrettyTable()
-        signature_plan_table.field_names = ['t'] + [str(t) for t in range(0, horizon)] + ['total']
-        signature_plan_table.add_row(['buy'] + buy_plan + [sum(buy_plan)])
-        signature_plan_table.add_row(['sel'] + sell_plan + [sum(sell_plan)])
-        print('\n--- Signatures Plan ---')
-        print(signature_plan_table)
+        profit = 0
+        set_of_signed_buy = set()
+        set_of_signed_sell = set()
+        for s in sell_agreements:
+            qtty_s_satisfied = 0
+            set_of_buy_for_s = set()
+            revenue = 0
+            cost = 0
+            for i, b in enumerate(buy_agreements):
+                if b[SCMLContractsSigner.TIME] < s[SCMLContractsSigner.TIME]:
+                    qtty_s_satisfied += b[SCMLContractsSigner.QUANTITY]
+                    set_of_buy_for_s.add(i)
+                    cost += b[SCMLContractsSigner.QUANTITY] * b[SCMLContractsSigner.PRICE] * b[SCMLContractsSigner.PARTNER_TRUST]
+                    # Todo: check if the per-unit price is low enough to actually commit to buy the inputs for the sell contract under consideration.
+                    if qtty_s_satisfied >= s[SCMLContractsSigner.QUANTITY]:
+                        revenue += s[SCMLContractsSigner.QUANTITY] * s[SCMLContractsSigner.PRICE] * s[SCMLContractsSigner.PARTNER_TRUST]
+                        set_of_signed_sell.add(s[SCMLContractsSigner.MASTER_INDEX])
+                        set_of_signed_buy = set_of_signed_buy | {buy_agreements[i][SCMLContractsSigner.MASTER_INDEX] for i in set_of_buy_for_s}
+                        # We have enough to satisfy this contract.
+                        buy_agreements = [b for i, b in enumerate(buy_agreements) if i not in set_of_buy_for_s]
+                        profit += revenue - cost
+                        break
 
-        # Print solve time info.
-        statistics_table = PrettyTable()
-        statistics_table.field_names = ['Statistic', 'Value']
-
-        time_to_generate_ilp = None
-        if signer_output['time_to_generate_ilp'] is not None:
-            time_to_generate_ilp = f"{signer_output['time_to_generate_ilp'] : .4f}"
-        statistics_table.add_row(['time to generate the ILP', f'{time_to_generate_ilp} sec.'])
-
-        time_to_solve_ilp = None
-        if signer_output['time_to_solve_ilp'] is not None:
-            time_to_solve_ilp = f"{signer_output['time_to_solve_ilp'] : .4f}"
-        statistics_table.add_row(['time to solve the ILP', f"{time_to_solve_ilp} sec."])
-
-        total_time = None
-        if signer_output['time_to_generate_ilp'] is not None and signer_output['time_to_solve_ilp'] is not None:
-            total_time = f"{signer_output['time_to_generate_ilp'] + signer_output['time_to_solve_ilp'] : .4f}"
-        statistics_table.add_row(['total solver time', f'{total_time} sec.'])
-
-        status = None
-        if signer_output['model'] is not None:
-            status = pulp.LpStatus[signer_output['model'].status]
-        statistics_table.add_row(['solver status', f'{status}'])
-
-        objective = None
-        if signer_output['model'] is not None:
-            objective_value = None
-            if pulp.value(signer_output['model'].objective) is not None:
-                objective_value = pulp.value(signer_output['model'].objective)
-            objective = f"{objective_value}"
-        statistics_table.add_row(['optimal profit', f'{objective}'])
-
-        statistics_table.align['Statistic'] = 'r'
-        print(statistics_table)
-
-        @staticmethod
-        def greedy_signer(agent_id: str, agreements: List[Contract], trust_probabilities: Dict[str, float]):
-            pass
+        return {'agent_id': agent_id,
+                'agreements': agreements,
+                'list_of_signatures': [agent_id if (i in set_of_signed_buy or i in set_of_signed_sell) else None for i, _ in enumerate(agreements)],
+                'trust_probabilities': trust_probabilities,
+                'profit': profit}

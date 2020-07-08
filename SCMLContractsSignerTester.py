@@ -1,8 +1,10 @@
 import unittest
 import random
+import pprint
 from negmas import Contract
 from typing import Dict
-import SCMLContractsSigner
+from SCMLContractsSigner import SCMLContractsSigner
+from SCMLContractsSignerInspector import SCMLContractsSignerInspector
 import pulp
 
 """
@@ -30,7 +32,7 @@ class SCMLSignerTests(unittest.TestCase):
     OTHER_AGENT_ID = 'OTHER'
     DEFAULT_TRUST_PROB = {OTHER_AGENT_ID: 0.75}
     HOW_MANY_RUNS = 250
-    HORIZON_LENGTH = 25
+    HORIZON_LENGTH = 20
 
     @staticmethod
     def generate_random_contract(T: int = HORIZON_LENGTH, buy: bool = None, partners: Dict[str, float] = None):
@@ -60,22 +62,22 @@ class SCMLSignerTests(unittest.TestCase):
         Testing some border cases, e.g., signing a list of empty contracts, or signing a list with only buy/sell agreements.
         """
         # Empty list of agreements should raise an exception.
-        signer_output_empty_list = SCMLContractsSigner.SCMLContractsSigner.sign(SCMLSignerTests.AGENT_ID, [], SCMLSignerTests.DEFAULT_TRUST_PROB)
-        SCMLContractsSigner.SCMLContractsSigner.signer_inspector(signer_output_empty_list)
+        signer_output_empty_list = SCMLContractsSigner.sign(SCMLSignerTests.AGENT_ID, [], SCMLSignerTests.DEFAULT_TRUST_PROB)
+        SCMLContractsSignerInspector.signer_inspector(signer_output_empty_list)
         self.assertEqual(len(signer_output_empty_list['list_of_signatures']), 0)
 
         # A list of agreements with no sell agreement should return a list of all None as signatures.
-        signer_output_all_buy = SCMLContractsSigner.SCMLContractsSigner.sign(SCMLSignerTests.AGENT_ID,
-                                                                             [SCMLSignerTests.generate_random_contract(100, buy=True) for _ in range(0, 10)],
-                                                                             SCMLSignerTests.DEFAULT_TRUST_PROB)
-        SCMLContractsSigner.SCMLContractsSigner.signer_inspector(signer_output_all_buy)
+        signer_output_all_buy = SCMLContractsSigner.sign(SCMLSignerTests.AGENT_ID,
+                                                         [SCMLSignerTests.generate_random_contract(100, buy=True) for _ in range(0, 10)],
+                                                         SCMLSignerTests.DEFAULT_TRUST_PROB)
+        SCMLContractsSignerInspector.signer_inspector(signer_output_all_buy)
         self.assertTrue(all(signature is None for signature in signer_output_all_buy['list_of_signatures']))
 
         # A list of agreements with all sell agreements should return a list of all None as signatures, as we can't buy inputs to satisfy demand.
-        signer_output_all_sell = SCMLContractsSigner.SCMLContractsSigner.sign(SCMLSignerTests.AGENT_ID,
-                                                                              [SCMLSignerTests.generate_random_contract(100, buy=False) for _ in range(0, 10)],
-                                                                              SCMLSignerTests.DEFAULT_TRUST_PROB)
-        SCMLContractsSigner.SCMLContractsSigner.signer_inspector(signer_output_all_sell)
+        signer_output_all_sell = SCMLContractsSigner.sign(SCMLSignerTests.AGENT_ID,
+                                                          [SCMLSignerTests.generate_random_contract(100, buy=False) for _ in range(0, 10)],
+                                                          SCMLSignerTests.DEFAULT_TRUST_PROB)
+        SCMLContractsSignerInspector.signer_inspector(signer_output_all_sell)
         self.assertTrue(all(signature is None for signature in signer_output_all_sell['list_of_signatures']))
 
     def test_manual_agreements_for_visual_inspection(self):
@@ -90,14 +92,15 @@ class SCMLSignerTests(unittest.TestCase):
         ]
 
         # Call the signer.
-        signer_output = SCMLContractsSigner.SCMLContractsSigner.sign(SCMLSignerTests.AGENT_ID, list_of_agreements, SCMLSignerTests.DEFAULT_TRUST_PROB)
-        SCMLContractsSigner.SCMLContractsSigner.signer_inspector(signer_output)
+        signer_output = SCMLContractsSigner.sign(SCMLSignerTests.AGENT_ID, list_of_agreements, SCMLSignerTests.DEFAULT_TRUST_PROB)
+        SCMLContractsSignerInspector.signer_inspector(signer_output)
 
         # Check the consistency of the plan
-        self.assertTrue(SCMLContractsSigner.SCMLContractsSigner.is_sign_plan_consistent(signer_output))
+        self.assertTrue(SCMLContractsSigner.is_sign_plan_consistent(signer_output))
 
         # Assert we get the optimal profit
         self.assertEqual(pulp.value(signer_output['model'].objective), 100.0 * SCMLSignerTests.DEFAULT_TRUST_PROB[SCMLSignerTests.OTHER_AGENT_ID])
+        self.assertEqual(signer_output['profit'], 100.0 * SCMLSignerTests.DEFAULT_TRUST_PROB[SCMLSignerTests.OTHER_AGENT_ID])
 
     def test_random_agreements_for_visual_inspection(self):
         """
@@ -123,11 +126,11 @@ class SCMLSignerTests(unittest.TestCase):
         random.shuffle(list_of_agreements)
 
         # Call the signer.
-        signer_output = SCMLContractsSigner.SCMLContractsSigner.sign(SCMLSignerTests.AGENT_ID, list_of_agreements, SCMLSignerTests.DEFAULT_TRUST_PROB)
-        SCMLContractsSigner.SCMLContractsSigner.signer_inspector(signer_output)
+        signer_output = SCMLContractsSigner.sign(SCMLSignerTests.AGENT_ID, list_of_agreements, SCMLSignerTests.DEFAULT_TRUST_PROB)
+        SCMLContractsSignerInspector.signer_inspector(signer_output)
 
         # Check the consistency of the plan.
-        self.assertTrue(SCMLContractsSigner.SCMLContractsSigner.is_sign_plan_consistent(signer_output))
+        self.assertTrue(SCMLContractsSigner.is_sign_plan_consistent(signer_output))
 
     def test_many_random_agreements(self, n: int = 50, partners: Dict[str, float] = None):
         """
@@ -140,27 +143,60 @@ class SCMLSignerTests(unittest.TestCase):
         list_of_agreements = [SCMLSignerTests.generate_random_contract(partners=partners) for _ in range(0, n)]
 
         # Call the signer.
-        signer_output = SCMLContractsSigner.SCMLContractsSigner.sign(SCMLSignerTests.AGENT_ID, list_of_agreements, partners)
-        SCMLContractsSigner.SCMLContractsSigner.signer_inspector(signer_output)
+        signer_output = SCMLContractsSigner.sign(SCMLSignerTests.AGENT_ID, list_of_agreements, partners)
+        SCMLContractsSignerInspector.signer_inspector(signer_output)
+        SCMLContractsSignerInspector.solver_statistics(signer_output)
 
         # Check the consistency of the plan.
-        self.assertTrue(SCMLContractsSigner.SCMLContractsSigner.is_sign_plan_consistent(signer_output))
+        self.assertTrue(SCMLContractsSigner.is_sign_plan_consistent(signer_output))
+
+        # Check greedy.
+        greedy_signer_output = SCMLContractsSigner.greedy_signer(SCMLSignerTests.AGENT_ID, list_of_agreements, partners)
+        SCMLContractsSignerInspector.signer_inspector(greedy_signer_output, title='Greedy Solver')
+
+        self.assertTrue(SCMLContractsSigner.is_sign_plan_consistent(greedy_signer_output))
+
+        # Check that the greedy profit is less than the optimal solver's profit. We add 0.00001 tolerance to avoid numerical issues.
+        if signer_output['profit'] is not None:
+            print(f"greedy_profit = {greedy_signer_output['profit']}, OPT =  {signer_output['profit']}")
+            self.assertLessEqual(greedy_signer_output['profit'] - 0.00001, signer_output['profit'])
 
     def test_multiple_runs(self):
         """
         Test many runs of signing contracts.
         """
-        how_many_agreements = 125
+        how_many_agreements = 50
 
         for _ in range(0, SCMLSignerTests.HOW_MANY_RUNS):
             self.test_many_random_agreements(n=random.randint(1, how_many_agreements))
 
     def test_different_trust(self):
+        """
+        In this test,  partners have randomly chosen trust probabilities.
+        """
         how_many_partners = 50
-
         possible_partners = {f'partner_{i}': random.random() for i in range(1, how_many_partners)}
         for _ in range(0, SCMLSignerTests.HOW_MANY_RUNS):
             self.test_many_random_agreements(partners=possible_partners)
+
+    def test_greedy_solver(self):
+        """
+        Simple tests for the greedy solver.
+        """
+        list_of_agreements = [
+            Contract(partners=[SCMLSignerTests.AGENT_ID, SCMLSignerTests.OTHER_AGENT_ID], agreement={'time': 6, 'quantity': 1, 'unit_price': 110.0}, annotation={'is_buy': False}),
+            Contract(partners=[SCMLSignerTests.AGENT_ID, SCMLSignerTests.OTHER_AGENT_ID], agreement={'time': 4, 'quantity': 1, 'unit_price': 10.00}, annotation={'is_buy': True}),
+            Contract(partners=[SCMLSignerTests.AGENT_ID, SCMLSignerTests.OTHER_AGENT_ID], agreement={'time': 3, 'quantity': 1, 'unit_price': 100.00}, annotation={'is_buy': True}),
+            Contract(partners=[SCMLSignerTests.AGENT_ID, SCMLSignerTests.OTHER_AGENT_ID], agreement={'time': 1, 'quantity': 2, 'unit_price': 12.00}, annotation={'is_buy': False}),
+            Contract(partners=[SCMLSignerTests.AGENT_ID, SCMLSignerTests.OTHER_AGENT_ID], agreement={'time': 5, 'quantity': 1, 'unit_price': 11.01}, annotation={'is_buy': False}),
+        ]
+
+        signer_output = SCMLContractsSigner.greedy_signer(SCMLSignerTests.AGENT_ID, list_of_agreements, SCMLSignerTests.DEFAULT_TRUST_PROB)
+        pprint.pprint(signer_output['agreements'])
+        print(signer_output['list_of_signatures'])
+        print(signer_output['profit'])
+        # Check the consistency of the plan.
+        self.assertTrue(SCMLContractsSigner.is_sign_plan_consistent(signer_output))
 
 
 if __name__ == '__main__':
