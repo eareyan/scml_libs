@@ -38,8 +38,15 @@ class SCMLContractsSigner:
         :return: a list of the same length as the input list of agreements. The i-th element of the return list
         is self.id/None in case the agent wants/do not wants to sign the i-th agreement in the input list.
         """
+        # If the list of agreements is empty, then return an empty list of signatures.
+        if len(agreements) == 0:
+            return {'list_of_signatures': [],
+                    'model': None,
+                    'time_to_generate_ilp': None,
+                    'time_to_solve_ilp': None,
+                    'agreements': agreements}
 
-        # First, partition the list of agreements into agreements to buy inputs and agreements to sell outputs.
+        # Partition the list of agreements into agreements to buy inputs and agreements to sell outputs.
         agreements_to_buy_inputs = []
         agreements_to_sell_outputs = []
         for i, agreement in enumerate(agreements):
@@ -54,9 +61,13 @@ class SCMLContractsSigner:
             else:
                 agreements_to_sell_outputs.append(agreement_tuple)
 
-        # There needs to be some sell contracts, otherwise the signer has nothing to do.
+        # If there are no sell contracts, the signer has nothing to do and signs nothing.
         if len(agreements_to_sell_outputs) == 0:
-            raise Exception("The signer must receive at least one sell contract to sign.")
+            return {'list_of_signatures': [None] * len(agreements),
+                    'model': None,
+                    'time_to_generate_ilp': None,
+                    'time_to_solve_ilp': None,
+                    'agreements': agreements}
 
         # For efficiency purposes, we order the agreements by delivery times. But, before we do, we must be able to
         # recover the indices of the agreements as given to the solver, otherwise, we can't map the output to the right agreements.
@@ -138,6 +149,43 @@ class SCMLContractsSigner:
                 'agreements': agreements}
 
     @staticmethod
+    def get_plan_as_lists(signer_output):
+        # Check if agreements are received
+        if len(signer_output['agreements']) == 0:
+            return 0, [], []
+
+        # Compute the horizon of the agreements defined as the time of the farthest agreement.
+        horizon = max(a['agreement']['time'] for a in signer_output['agreements']) + 1
+        buy_plan = [0 for _ in range(horizon)]
+        sell_plan = [0 for _ in range(horizon)]
+        for i, a in enumerate(signer_output['agreements']):
+            if signer_output['list_of_signatures'][i] is not None:
+                if a['annotation']['is_buy']:
+                    buy_plan[a['agreement']['time']] = buy_plan[a['agreement']['time']] + a['agreement']['quantity']
+                else:
+                    sell_plan[a['agreement']['time']] = sell_plan[a['agreement']['time']] + a['agreement']['quantity']
+        return horizon, buy_plan, sell_plan
+
+    @staticmethod
+    def plan_checker(signer_output):
+        """
+        Given the output of the signer, this function checks if the plan is feasible, i.e.,
+        if it never has a negative number of output units assuming all inputs are turned
+        into outputs in 1 time step and that all outputs are sold as indicated by the sign plan.
+        :param signer_output: the output of SCMLContractsSigner.sign
+        :return: True if the plan is implementable, otherwise False.
+        """
+        horizon, buy_plan, sell_plan = SCMLContractsSigner.get_plan_as_lists(signer_output)
+        assert len(buy_plan) == len(sell_plan)
+        assert sell_plan[0] == 0
+        output_inventory_level = 0
+        for i in range(1, len(buy_plan)):
+            output_inventory_level += buy_plan[i - 1] - sell_plan[i]
+            if output_inventory_level < 0:
+                return False
+        return True
+
+    @staticmethod
     def signer_inspector(signer_output):
         """
         This function takes the output of the signer and outputs useful info. Used for debugging purposes.
@@ -147,34 +195,52 @@ class SCMLContractsSigner:
         # Some prints.
         agreements_table = PrettyTable()
         agreements_table.field_names = ['t', 'q', 'p', 'is_buy', 'signed?']
-        for i, a in enumerate(signer_output["agreements"]):
-            agreements_table.add_row([a["agreement"]["time"],
-                                      a["agreement"]["quantity"],
-                                      a["agreement"]["unit_price"],
-                                      a["annotation"]["is_buy"],
-                                      "yes" if signer_output["list_of_signatures"][i] is not None else "No"])
-        print("\n--- Agreements ---")
+        for i, a in enumerate(signer_output['agreements']):
+            agreements_table.add_row([a['agreement']['time'],
+                                      a['agreement']['quantity'],
+                                      a['agreement']['unit_price'],
+                                      a['annotation']['is_buy'],
+                                      'yes' if signer_output['list_of_signatures'][i] is not None else 'No'])
+        print('\n--- Agreements ---')
         print(agreements_table)
 
-        # Compute the horizon of the agreements defined as the time of the farthest agreement.
-        horizon = max(a['agreement']['time'] for a in signer_output['agreements']) + 1
-        buy_plan = [0 for _ in range(horizon)]
-        sell_plan = [0 for _ in range(horizon)]
-        for i, a in enumerate(signer_output['agreements']):
-            if signer_output["list_of_signatures"][i] is not None:
-                if a['annotation']['is_buy']:
-                    buy_plan[a['agreement']['time']] = buy_plan[a['agreement']['time']] + a['agreement']['quantity']
-                else:
-                    sell_plan[a['agreement']['time']] = sell_plan[a['agreement']['time']] + a['agreement']['quantity']
-
+        # Pretty table print of the buy and sell plan.
+        horizon, buy_plan, sell_plan = SCMLContractsSigner.get_plan_as_lists(signer_output)
         signature_plan_table = PrettyTable()
         signature_plan_table.field_names = ['t'] + [str(t) for t in range(0, horizon)] + ['total']
         signature_plan_table.add_row(['buy'] + buy_plan + [sum(buy_plan)])
         signature_plan_table.add_row(['sel'] + sell_plan + [sum(sell_plan)])
-        print("\n--- Signatures ---")
+        print('\n--- Signatures Plan ---')
         print(signature_plan_table)
 
-        # Print solve time info
-        print(f'\nit took {signer_output["time_to_generate_ilp"] : .4f} to generate the ILP')
-        print(f'it took {signer_output["time_to_solve_ilp"] : .4f} sec to solve, result = {pulp.LpStatus[signer_output["model"].status]}')
-        print(f'it took {signer_output["time_to_generate_ilp"] + signer_output["time_to_solve_ilp"] : .4f} sec in total, and has opt profit of {pulp.value(signer_output["model"].objective):.4f}')
+        # Print solve time info.
+        statistics_table = PrettyTable()
+        statistics_table.field_names = ['Statistic', 'Value']
+
+        time_to_generate_ilp = None
+        if signer_output['time_to_generate_ilp'] is not None:
+            time_to_generate_ilp = f"{signer_output['time_to_generate_ilp'] : .4f}"
+        statistics_table.add_row(['time to generate the ILP', f'{time_to_generate_ilp} sec.'])
+
+        time_to_solve_ilp = None
+        if signer_output['time_to_solve_ilp'] is not None:
+            time_to_solve_ilp = f"{signer_output['time_to_solve_ilp'] : .4f}"
+        statistics_table.add_row(['time to solve the ILP', f"{time_to_solve_ilp} sec."])
+
+        total_time = None
+        if signer_output['time_to_generate_ilp'] is not None and signer_output['time_to_solve_ilp'] is not None:
+            total_time = f"{signer_output['time_to_generate_ilp'] + signer_output['time_to_solve_ilp'] : .4f}"
+        statistics_table.add_row(['total solver time', f'{total_time} sec.'])
+
+        status = None
+        if signer_output['model'] is not None:
+            status = pulp.LpStatus[signer_output['model'].status]
+        statistics_table.add_row(['solver status', f'{status}'])
+
+        objective = None
+        if signer_output['model'] is not None:
+            objective = f"{pulp.value(signer_output['model'].objective):.4f}"
+        statistics_table.add_row(['optimal profit', f'{objective}'])
+
+        statistics_table.align['Statistic'] = 'r'
+        print(statistics_table)
