@@ -1,7 +1,7 @@
 import pulp
 import time
 from negmas import Contract
-from typing import List
+from typing import List, Dict
 from pulp import PULP_CBC_CMD
 from prettytable import PrettyTable
 
@@ -12,7 +12,8 @@ class SCMLContractsSigner:
     QUANTITY = 1
     TIME = 2
     PRICE = 3
-    SUB_INDEX = 4
+    PARTNER_TRUST = 4
+    SUB_INDEX = 5
 
     @staticmethod
     def constraints_generation_helper(buy_agreements, buy_sign_vars, current_sell_time):
@@ -30,23 +31,33 @@ class SCMLContractsSigner:
         return partial_buy_sum
 
     @staticmethod
-    def sign(agent_id: str, agreements: List[Contract]):
+    def find_partner_trust(agent_id: str, agreement: Contract, trust_probabilities: Dict[str, float]):
         """
-        Given a list of agreements, each of type negmas.Contract, decides which agreements to sign.
-        :param agent_id: the agent's id (self.id of the calling agent)
-        :param agreements: a list of agreements, each of type negmas.Contracts.
-        :return: a list of the same length as the input list of agreements. The i-th element of the return list
-        is self.id/None in case the agent wants/do not wants to sign the i-th agreement in the input list.
+        Given the agent's id and an agreement, return the partner of the agreement.
+        This function checks that agreement.partners is a list of length exactly 2, where both elements of the list are distinct
+        and one of them is agent_id. It also checks that the trust values are actual probabilities, i.e., numbers between 0 and 1.
+        :param agent_id: our agent's id
+        :param agreement: the agreement for which we want to find the agreement's partner
+        :param trust_probabilities: a dictionary mapping an agent's id to its trust probability
+        :return: the id of the partner.
         """
-        # If the list of agreements is empty, then return an empty list of signatures.
-        if len(agreements) == 0:
-            return {'list_of_signatures': [],
-                    'model': None,
-                    'time_to_generate_ilp': None,
-                    'time_to_solve_ilp': None,
-                    'agreements': agreements}
+        # Find out who is the negotiation partner.
+        assert len(agreement.partners) == 2
+        assert agreement.partners[0] != agreement.partners[1]
+        assert agreement.partners[0] == agent_id or agreement.partners[1] == agent_id
+        partner = agreement.partners[0] if agreement.partners[0] != agent_id else agreement.partners[1]
+        assert partner in trust_probabilities
+        assert 0.0 <= trust_probabilities[partner] <= 1.0
+        return trust_probabilities[partner]
 
-        # Partition the list of agreements into agreements to buy inputs and agreements to sell outputs.
+    @staticmethod
+    def partition_agreements(agent_id: str, agreements: List[Contract], trust_probabilities: Dict[str, float]):
+        """
+        Partition the list of agreements into agreements to buy inputs and agreements to sell outputs.
+        :param agreements:
+        :param trust_probabilities:
+        :return:
+        """
         agreements_to_buy_inputs = []
         agreements_to_sell_outputs = []
         for i, agreement in enumerate(agreements):
@@ -54,20 +65,47 @@ class SCMLContractsSigner:
             agreement_tuple = (i,
                                agreement.agreement['quantity'],
                                agreement.agreement['time'],
-                               agreement.agreement['unit_price'])
+                               agreement.agreement['unit_price'],
+                               SCMLContractsSigner.find_partner_trust(agent_id=agent_id, agreement=agreement, trust_probabilities=trust_probabilities))
             # Note that we assume here that we only engage in buy contracts for inputs and sell contracts for outputs.
             if agreement.annotation['is_buy']:
                 agreements_to_buy_inputs.append(agreement_tuple)
             else:
                 agreements_to_sell_outputs.append(agreement_tuple)
+        return agreements_to_buy_inputs, agreements_to_sell_outputs
+
+    @staticmethod
+    def sign(agent_id: str, agreements: List[Contract], trust_probabilities: Dict[str, float]):
+        """
+        Given a list of agreements and trust probabilities, each of type negmas.Contract, decides which agreements to sign.
+        :param agent_id: the agent's id (self.id of the calling agent)
+        :param agreements: a list of agreements, each of type negmas.Contracts.
+        :param trust_probabilities: a dictionary mapping an agent's id to its trust probability
+        :return: a list of the same length as the input list of agreements. The i-th element of the return list
+        is self.id/None in case the agent wants/do not wants to sign the i-th agreement in the input list.
+        """
+        # If the list of agreements is empty, then return an empty list of signatures.
+        if len(agreements) == 0:
+            return {'list_of_signatures': [],
+                    'agent_id': agent_id,
+                    'model': None,
+                    'time_to_generate_ilp': None,
+                    'time_to_solve_ilp': None,
+                    'agreements': agreements,
+                    'trust_probabilities': trust_probabilities}
+
+        # Partition agreements into buy and sell agreements.
+        agreements_to_buy_inputs, agreements_to_sell_outputs = SCMLContractsSigner.partition_agreements(agent_id, agreements, trust_probabilities)
 
         # If there are no sell contracts, the signer has nothing to do and signs nothing.
         if len(agreements_to_sell_outputs) == 0:
             return {'list_of_signatures': [None] * len(agreements),
+                    'agent_id': agent_id,
                     'model': None,
                     'time_to_generate_ilp': None,
                     'time_to_solve_ilp': None,
-                    'agreements': agreements}
+                    'agreements': agreements,
+                    'trust_probabilities': trust_probabilities}
 
         # For efficiency purposes, we order the agreements by delivery times. But, before we do, we must be able to
         # recover the indices of the agreements as given to the solver, otherwise, we can't map the output to the right agreements.
@@ -93,12 +131,14 @@ class SCMLContractsSigner:
         # The objective function is profit, defined as revenue minus cost.
         model += pulp.lpSum([sell_agreements[i][SCMLContractsSigner.QUANTITY] *
                              sell_agreements[i][SCMLContractsSigner.PRICE] *
+                             sell_agreements[i][SCMLContractsSigner.PARTNER_TRUST] *
                              sell_sign_vars[s[SCMLContractsSigner.SUB_INDEX]]
                              for i, s in enumerate(sell_agreements)]
                             +
                             [-1.0 *
                              buy_agreements[i][SCMLContractsSigner.QUANTITY] *
                              buy_agreements[i][SCMLContractsSigner.PRICE] *
+                             buy_agreements[i][SCMLContractsSigner.PARTNER_TRUST] *
                              buy_sign_vars[b[SCMLContractsSigner.SUB_INDEX]]
                              for i, b in enumerate(buy_agreements)])
 
@@ -134,19 +174,21 @@ class SCMLContractsSigner:
         # Record which contracts should be signed. We start by assuming no contracts will be signed.
         list_of_signatures = [None] * len(agreements)
         for agreement in buy_agreements_copy:
-            if int(buy_sign_vars[agreement[SCMLContractsSigner.SUB_INDEX]].varValue) == 1:
+            if buy_sign_vars[agreement[SCMLContractsSigner.SUB_INDEX]].varValue is not None and int(buy_sign_vars[agreement[SCMLContractsSigner.SUB_INDEX]].varValue) == 1:
                 list_of_signatures[agreement[SCMLContractsSigner.MASTER_INDEX]] = agent_id
 
         for agreement in sell_agreements_copy:
-            if int(sell_sign_vars[agreement[SCMLContractsSigner.SUB_INDEX]].varValue) == 1:
+            if sell_sign_vars[agreement[SCMLContractsSigner.SUB_INDEX]].varValue is not None and int(sell_sign_vars[agreement[SCMLContractsSigner.SUB_INDEX]].varValue) == 1:
                 list_of_signatures[agreement[SCMLContractsSigner.MASTER_INDEX]] = agent_id
 
         # Return multiple objects for inspection purposes. In production, we care about the list of sign contracts, 'list_of_signatures'.
         return {'list_of_signatures': list_of_signatures,
+                'agent_id': agent_id,
                 'model': model,
                 'time_to_generate_ilp': time_to_generate_ilp,
                 'time_to_solve_ilp': time_to_solve_ilp,
-                'agreements': agreements}
+                'agreements': agreements,
+                'trust_probabilities': trust_probabilities}
 
     @staticmethod
     def get_plan_as_lists(signer_output):
@@ -167,7 +209,7 @@ class SCMLContractsSigner:
         return horizon, buy_plan, sell_plan
 
     @staticmethod
-    def plan_checker(signer_output):
+    def is_sign_plan_consistent(signer_output):
         """
         Given the output of the signer, this function checks if the plan is feasible, i.e.,
         if it never has a negative number of output units assuming all inputs are turned
@@ -177,7 +219,10 @@ class SCMLContractsSigner:
         """
         horizon, buy_plan, sell_plan = SCMLContractsSigner.get_plan_as_lists(signer_output)
         assert len(buy_plan) == len(sell_plan)
+        # Sanity check: we cannot sell at the first time period.
         assert sell_plan[0] == 0
+        # Sanity check: we should not buy at the last time period, as we can't sell.
+        assert buy_plan[len(buy_plan) - 1] == 0
         output_inventory_level = 0
         for i in range(1, len(buy_plan)):
             output_inventory_level += buy_plan[i - 1] - sell_plan[i]
@@ -194,12 +239,14 @@ class SCMLContractsSigner:
         """
         # Some prints.
         agreements_table = PrettyTable()
-        agreements_table.field_names = ['t', 'q', 'p', 'is_buy', 'signed?']
+        agreements_table.field_names = ['t', 'q', 'p', 'is_buy', 'partners', 'trust', 'signed?']
         for i, a in enumerate(signer_output['agreements']):
             agreements_table.add_row([a['agreement']['time'],
                                       a['agreement']['quantity'],
-                                      a['agreement']['unit_price'],
+                                      f"{a['agreement']['unit_price'] : .4f}",
                                       a['annotation']['is_buy'],
+                                      a['partners'],
+                                      f"{SCMLContractsSigner.find_partner_trust(agent_id=signer_output['agent_id'], agreement=a, trust_probabilities=signer_output['trust_probabilities']) : .4f}",
                                       'yes' if signer_output['list_of_signatures'][i] is not None else 'No'])
         print('\n--- Agreements ---')
         print(agreements_table)
@@ -239,8 +286,15 @@ class SCMLContractsSigner:
 
         objective = None
         if signer_output['model'] is not None:
-            objective = f"{pulp.value(signer_output['model'].objective):.4f}"
+            objective_value = None
+            if pulp.value(signer_output['model'].objective) is not None:
+                objective_value = pulp.value(signer_output['model'].objective)
+            objective = f"{objective_value}"
         statistics_table.add_row(['optimal profit', f'{objective}'])
 
         statistics_table.align['Statistic'] = 'r'
         print(statistics_table)
+
+        @staticmethod
+        def greedy_signer(agent_id: str, agreements: List[Contract], trust_probabilities: Dict[str, float]):
+            pass
