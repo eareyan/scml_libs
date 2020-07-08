@@ -253,7 +253,6 @@ class SCMLContractsSigner:
         for s in sell_agreements:
             qtty_s_satisfied = 0
             set_of_buy_for_s = set()
-            revenue = 0
             cost = 0
             for i, b in enumerate(buy_agreements):
                 if b[SCMLContractsSigner.TIME] < s[SCMLContractsSigner.TIME]:
@@ -262,11 +261,11 @@ class SCMLContractsSigner:
                     cost += b[SCMLContractsSigner.QUANTITY] * b[SCMLContractsSigner.PRICE] * b[SCMLContractsSigner.PARTNER_TRUST]
                     # Todo: check if the per-unit price is low enough to actually commit to buy the inputs for the sell contract under consideration.
                     if qtty_s_satisfied >= s[SCMLContractsSigner.QUANTITY]:
-                        revenue += s[SCMLContractsSigner.QUANTITY] * s[SCMLContractsSigner.PRICE] * s[SCMLContractsSigner.PARTNER_TRUST]
                         set_of_signed_sell.add(s[SCMLContractsSigner.MASTER_INDEX])
                         set_of_signed_buy = set_of_signed_buy | {buy_agreements[i][SCMLContractsSigner.MASTER_INDEX] for i in set_of_buy_for_s}
                         # We have enough to satisfy this contract.
                         buy_agreements = [b for i, b in enumerate(buy_agreements) if i not in set_of_buy_for_s]
+                        revenue = s[SCMLContractsSigner.QUANTITY] * s[SCMLContractsSigner.PRICE] * s[SCMLContractsSigner.PARTNER_TRUST]
                         profit += revenue - cost
                         break
 
