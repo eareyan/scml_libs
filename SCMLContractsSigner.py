@@ -17,10 +17,10 @@ class SCMLContractsSigner:
     def constraints_generation_helper(buy_agreements, buy_sign_vars, current_sell_time):
         """
         A helper function to generate the constraints of the contract signer.
-        :param buy_agreements:
-        :param buy_sign_vars:
-        :param current_sell_time:
-        :return:
+        :param buy_agreements: a list of buy agreements, each element in the list a tuple.
+        :param buy_sign_vars: a list of sell agreements, each element in the list a tuple.
+        :param current_sell_time: an integer denoting the current time we are considering for selling outputs.
+        :return: a list with buy sign variables times buy quantities.
         """
         partial_buy_sum = []
         while len(buy_agreements) > 0 and (buy_agreements[0][SCMLContractsSigner.TIME] < current_sell_time):
@@ -52,9 +52,10 @@ class SCMLContractsSigner:
     def partition_agreements(agent_id: str, agreements: List[Contract], trust_probabilities: Dict[str, float]):
         """
         Partition the list of agreements into agreements to buy inputs and agreements to sell outputs.
-        :param agreements:
-        :param trust_probabilities:
-        :return:
+        :param agreements: a list of agreements, each element of the list of type negmas.Contract
+        :param trust_probabilities: a dictionary mapping an agent's id to its trust probability
+        :return: two lists, one with buy agreements and another with sell agreements. Each list contains tuple with only the
+        relevant information of an agreement that we use in our solvers.
         """
         agreements_to_buy_inputs = []
         agreements_to_sell_outputs = []
@@ -79,8 +80,9 @@ class SCMLContractsSigner:
         :param agent_id: the agent's id (self.id of the calling agent)
         :param agreements: a list of agreements, each of type negmas.Contracts.
         :param trust_probabilities: a dictionary mapping an agent's id to its trust probability
-        :return: a list of the same length as the input list of agreements. The i-th element of the return list
-        is self.id/None in case the agent wants/do not wants to sign the i-th agreement in the input list.
+        :return: a dictionary with information about the solver. In particular, the dictionary contains an entry 'list_of_signatures' which is
+         a list of the same length as the input list of agreements. The i-th element of the list 'list_of_signatures' is self.id/None in case
+         the agent wants/do not wants to sign the i-th agreement in the input list.
         """
         # If the list of agreements is empty, then return an empty list of signatures.
         if len(agreements) == 0:
@@ -193,6 +195,12 @@ class SCMLContractsSigner:
 
     @staticmethod
     def get_plan_as_lists(signer_output):
+        """
+        Given the dictionary object returned by a signer produces a number and two lists, the number being the horizon of the plan
+        induced by the signed contracts, and the lists being the buy plan and the sell plan, in that order
+        :param signer_output: the output of a signer
+        :return: the horizon, and two lists: buy plan and sell plan.
+        """
         # Check if agreements are received
         if len(signer_output['agreements']) == 0:
             return 0, [], []
@@ -236,12 +244,13 @@ class SCMLContractsSigner:
         """
         A simple greedy signer. Signs sell contracts in descending order of revenue, provided the contract can be satisfied.
         The buy contracts are completely consumed by a sell contract, i.e., if they are used for one sell contract, any possible
-        remaining units are effectively wasted.
+        remaining units are effectively wasted. This signer is primarily used as a sanity checker for the optimal signer.
+        In particular, the expected profit of the greedy signer should always be at most that of the optimal signer.
 
-        :param agent_id:
-        :param agreements:
-        :param trust_probabilities:
-        :return:
+        :param agent_id: the agent's id (self.id of the calling agent)
+        :param agreements: a list of agreements, each of type negmas.Contracts.
+        :param trust_probabilities: a dictionary mapping an agent's id to its trust probability
+        :return: a dictionary where entry 'list_of_signatures' is the relevant list of signatures.
         """
         buy_agreements, sell_agreements = SCMLContractsSigner.partition_agreements(agent_id, agreements, trust_probabilities)
         buy_agreements = sorted(buy_agreements, key=lambda x: x[SCMLContractsSigner.QUANTITY] * x[SCMLContractsSigner.PRICE] * x[SCMLContractsSigner.PARTNER_TRUST], reverse=False)
