@@ -52,6 +52,7 @@ class SCMLContractsSigner:
     def partition_agreements(agent_id: str, agreements: List[Contract], trust_probabilities: Dict[str, float]):
         """
         Partition the list of agreements into agreements to buy inputs and agreements to sell outputs.
+        :param agent_id: the agent's id (self.id of the calling agent)
         :param agreements: a list of agreements, each element of the list of type negmas.Contract
         :param trust_probabilities: a dictionary mapping an agent's id to its trust probability
         :return: two lists, one with buy agreements and another with sell agreements. Each list contains tuple with only the
