@@ -59,8 +59,8 @@ class SCMLBusinessPlan:
         :param q_max: and integer denoting the range over which quantities will be optimized, 0, ..., q_max.
         :param Q_inn: a map {t : { q : P(Q_inn = q @ time t} }, i.e., probabilities of seeing quantities for the buy product for each time in the horizon.
         :param Q_out: a map {t : { q : P(Q_out = q @ time t} }, i.e., probabilities of seeing quantities for the sell product for each time in the horizon.
-        :param p_inn: a map {t : price for buy product }
-        :param p_out: a map {t : price for the sell product }
+        :param p_inn: a map {t : price for buy product @ time t}, i.e., the expected price at which the input product will be traded at time t.
+        :param p_out: a map {t : price for the sell product @ time t }, i.e., the expected price at which the output product will be traded at time t.
         :param optimistic: a boolean.
         :return: a map with all the information about the solver and the actual business plan.
         """

@@ -11,7 +11,7 @@ class SCMLBusinessTests(unittest.TestCase):
     HOW_MANY_RUNS = 5
 
     @staticmethod
-    def synthetic_input(horizon: int, q_max: int):
+    def synthetic_input_creation(horizon: int, q_max: int):
 
         # Random quantities inn
         random_quantities_inn = np.random.randint(0, q_max, (horizon, q_max))
@@ -41,7 +41,7 @@ class SCMLBusinessTests(unittest.TestCase):
                 'p_out': p_out}
 
     def test_solve_minima(self):
-        synthetic_input = SCMLBusinessTests.synthetic_input(10, 30)
+        synthetic_input = SCMLBusinessTests.synthetic_input_creation(10, 30)
         inn, out = SCMLBusinessPlan.get_minima(horizon=synthetic_input['horizon'],
                                                q_max=synthetic_input['q_max'],
                                                Q_inn=synthetic_input['Q_inn'],
@@ -62,7 +62,7 @@ class SCMLBusinessTests(unittest.TestCase):
     @staticmethod
     def solve_a_plan(horizon: int, q_max: int):
         # Fetch synthetic input
-        synthetic_input = SCMLBusinessTests.synthetic_input(horizon=horizon, q_max=q_max)
+        synthetic_input = SCMLBusinessTests.synthetic_input_creation(horizon=horizon, q_max=q_max)
 
         # Debug print
         # pprint.pprint(inn)
