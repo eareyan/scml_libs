@@ -35,12 +35,12 @@ class SCMLSignerTests(unittest.TestCase):
     HORIZON_LENGTH = 20
 
     @staticmethod
-    def generate_random_contract(T: int = HORIZON_LENGTH, buy: bool = None, partners: Dict[str, float] = None):
+    def generate_random_contract(horizon: int = HORIZON_LENGTH, buy: bool = None, partners: Dict[str, float] = None):
         """
         Generates a random contract.
         If buy is None, the contract is equally likely to be a sell or buy contract.
         If buy is given, buy is expected to be a boolean indicated whehtehr the contract should be a buy or sell contract.
-        :param T: time horizon
+        :param horizon: time horizon
         :param buy: None or bool
         :param partners: a dictionary agent_id -> trust index
         :return: a random contract
@@ -52,9 +52,9 @@ class SCMLSignerTests(unittest.TestCase):
         random.shuffle(agreement_partners)
 
         return Contract(partners=agreement_partners,
-                        agreement={'time': random.randint(0, T - 1),
-                                   'quantity': random.randint(1, T - 1),
-                                   'unit_price': random.random() * (T - 1)},
+                        agreement={'time': random.randint(0, horizon - 1),
+                                   'quantity': random.randint(1, horizon - 1),
+                                   'unit_price': random.random() * (horizon - 1)},
                         annotation={'is_buy': random.randint(1, 2) <= 1 if buy is None else buy})
 
     def test_border_cases(self):
