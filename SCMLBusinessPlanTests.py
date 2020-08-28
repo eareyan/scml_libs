@@ -1,5 +1,4 @@
 import itertools as it
-import time
 import unittest
 
 import numpy as np
@@ -29,7 +28,7 @@ class SCMLBusinessTests(unittest.TestCase):
         p_out = {t: np.random.uniform(10, 15) for t in range(0, horizon)}
 
         # Sanity check: if the price of outputs is 0 always, then the program should buy and sell nothing.
-        # p_out = {t: np.random.uniform(0, 0) for t in range(0, T)}
+        # p_out = {t: np.random.uniform(0, 0) for t in range(0, horizon)}
 
         # Debug print
         # pprint.pprint(Q_inn)
@@ -41,35 +40,40 @@ class SCMLBusinessTests(unittest.TestCase):
                 'p_inn': p_inn,
                 'p_out': p_out}
 
-    def solve_a_plan(self, horizon: int, q_max: int):
+    def test_solve_minima(self):
+        synthetic_input = SCMLBusinessTests.synthetic_input(10, 30)
+        inn, out = SCMLBusinessPlan.get_minima(horizon=synthetic_input['horizon'],
+                                               q_max=synthetic_input['q_max'],
+                                               Q_inn=synthetic_input['Q_inn'],
+                                               Q_out=synthetic_input['Q_out'])
+        # Debug print
+        # pprint.pprint(inn)
+
+        # Some simple test: the expectation should be non-negative.
+        for t, minima_map in inn.items():
+            for q, expectation in minima_map.items():
+                self.assertGreaterEqual(expectation, 0)
+
+        # Some simple test: the expectation should be non-negative.
+        for t, minima_map in out.items():
+            for q, expectation in minima_map.items():
+                self.assertGreaterEqual(expectation, 0)
+
+    @staticmethod
+    def solve_a_plan(horizon: int, q_max: int):
         # Fetch synthetic input
         synthetic_input = SCMLBusinessTests.synthetic_input(horizon=horizon, q_max=q_max)
-        horizon = synthetic_input['horizon']
-        q_max = synthetic_input['q_max']
-        Q_inn = synthetic_input['Q_inn']
-        Q_out = synthetic_input['Q_out']
-        p_inn = synthetic_input['p_inn']
-        p_out = synthetic_input['p_out']
-
-        t0 = time.time()
-        inn = {t: SCMLBusinessPlan.compute_min_expectation(Q_inn[t], q_max) for t in range(0, horizon)}
-        out = {t: SCMLBusinessPlan.compute_min_expectation(Q_out[t], q_max) for t in range(0, horizon)}
-        print(f'took {time.time() - t0} to generate the minima')
-
-        # Sanity check: the expectation of the minima should be non-negative
-        for t, min_data in inn.items():
-            for q, the_min in min_data.items():
-                self.assertGreaterEqual(the_min, 0)
 
         # Debug print
         # pprint.pprint(inn)
 
-        business_plan_output = SCMLBusinessPlan.compute_business_plan(horizon=horizon,
-                                                                      q_max=q_max,
-                                                                      out=out,
-                                                                      inn=inn,
-                                                                      p_out=p_out,
-                                                                      p_inn=p_inn)
+        # Solve for the plan given a synthetic input.
+        business_plan_output = SCMLBusinessPlan.compute_business_plan(horizon=synthetic_input['horizon'],
+                                                                      q_max=synthetic_input['q_max'],
+                                                                      Q_inn=synthetic_input['Q_inn'],
+                                                                      Q_out=synthetic_input['Q_out'],
+                                                                      p_inn=synthetic_input['p_inn'],
+                                                                      p_out=synthetic_input['p_out'])
         SCMLBusinessPlanInspector.inspect_business_plan(business_plan_output=business_plan_output)
         total_buy_qtty = sum([business_plan_output['buy_plan'][t] for t in range(0, business_plan_output['horizon'])])
         total_sell_qtty = sum([business_plan_output['sell_plan'][t] for t in range(0, business_plan_output['horizon'])])
@@ -82,7 +86,8 @@ class SCMLBusinessTests(unittest.TestCase):
         for _ in range(0, SCMLBusinessTests.HOW_MANY_RUNS):
             for horizon, q_max in it.product([5, 10, 15], [5, 15, 30]):
                 business_plan_output, total_buy_qtty, total_sell_qtty = self.solve_a_plan(horizon=horizon, q_max=q_max)
-                # Making sure the plan is consistent.
+
+                # Making sure the plan is consistent. As currently formulated, the total buy quantity should be the same as the sell quantity.
                 if business_plan_output['optimistic']:
                     self.assertEqual(total_buy_qtty, total_sell_qtty)
 

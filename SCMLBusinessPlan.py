@@ -8,7 +8,7 @@ from typing import Dict
 class SCMLBusinessPlan:
 
     @staticmethod
-    def compute_min_expectation(dict_data, size) -> dict:
+    def compute_min_expectation(dict_data: Dict[int, float], size: int) -> dict:
         """
         Compute the expectation of min(y, X) for all values of y in the support of X where X is a discrete random variable.
         This function implements a simple dynamic program which is fully documented in a separate latex document.
@@ -26,26 +26,49 @@ class SCMLBusinessPlan:
         return ret
 
     @staticmethod
+    def get_minima(horizon: int,
+                   q_max: int,
+                   Q_inn: Dict[int, Dict[int, float]],
+                   Q_out: Dict[int, Dict[int, float]]):
+        """
+        Given the time horizon, the range of the domain optimization 0, ..., q_max, and the probability
+        distribution on the input and output produce, this function returns two maps:
+            {t : {q : E[min(q, Q_inn) } } and {t : {q : E[min(q, Q_out) } }.
+        This maps are used by the business plan solver.
+        :param horizon: an integer denoting the length of the plan.
+        :param q_max: and integer denoting the range over which quantities will be optimized, 0, ..., q_max.
+        :param Q_inn: a map {t : { q : P(Q_inn = q @ time t} }, i.e., probabilities of seeing quantities for the buy product for each time in the horizon.
+        :param Q_out: a map {t : { q : P(Q_out = q @ time t} }, i.e., probabilities of seeing quantities for the sell product for each time in the horizon.
+        :return:
+        """
+        inn = {t: SCMLBusinessPlan.compute_min_expectation(Q_inn[t], q_max) for t in range(0, horizon)}
+        out = {t: SCMLBusinessPlan.compute_min_expectation(Q_out[t], q_max) for t in range(0, horizon)}
+        return inn, out
+
+    @staticmethod
     def compute_business_plan(horizon: int,
                               q_max: int,
-                              out: Dict[int, Dict[int, float]],
-                              inn: Dict[int, Dict[int, float]],
-                              p_out: Dict[int, float],
+                              Q_inn: Dict[int, Dict[int, float]],
+                              Q_out: Dict[int, Dict[int, float]],
                               p_inn: Dict[int, float],
+                              p_out: Dict[int, float],
                               optimistic: bool = True):
         """
         Constructs the business plan.
         :param horizon: an integer denoting the length of the plan.
         :param q_max: and integer denoting the range over which quantities will be optimized, 0, ..., q_max.
-        :param out:
-        :param inn:
-        :param p_out:
-        :param p_inn:
-        :param optimistic:
-        :return:
+        :param Q_inn: a map {t : { q : P(Q_inn = q @ time t} }, i.e., probabilities of seeing quantities for the buy product for each time in the horizon.
+        :param Q_out: a map {t : { q : P(Q_out = q @ time t} }, i.e., probabilities of seeing quantities for the sell product for each time in the horizon.
+        :param p_inn: a map {t : price for buy product }
+        :param p_out: a map {t : price for the sell product }
+        :param optimistic: a boolean.
+        :return: a map with all the information about the solver and the actual business plan.
         """
         # Time the run of the algorithm.
         t0 = time.time()
+
+        # Generate the minima.
+        inn, out = SCMLBusinessPlan.get_minima(horizon, q_max, Q_inn, Q_out)
 
         # Generate the pulp problem.
         model = pulp.LpProblem('Business_Plan_Solver', pulp.LpMaximize)
